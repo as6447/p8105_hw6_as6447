@@ -1,0 +1,68 @@
+---
+title: "p8105_hw6_as6447"
+author: "Armaan Sodhi"
+date: "2022-12-01"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(p8105.datasets)
+library(viridis)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 10, 
+  fig.height = 10,
+  out.width = "90%")
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+## Problem 2
+
+1.Describe the raw data. 
+
+The raw data includes n=52179 observations with 12 variables. There are issues with some of the variable names, such as the `lon` variable, which is actually the longitudinal variable but is incorrectly stated. Another issue was that that the `city` and `state` are seperate from each other. These were instead combined together.
+
+```{r}
+homicide_data = read.csv('data/homicide-data.csv')%>% 
+   janitor::clean_names()%>%
+   unite('city_state',city:state,remove=FALSE, sep = ', ')%>%
+      unite('Victim_full_name',victim_first:victim_last,remove=FALSE, sep = ' ')%>%
+   select(-city,-state,-victim_last,-victim_first)%>%
+   rename(longitude=lon, latitude=lat)%>%
+   mutate(
+      unsolved_murder = if_else(disposition %in% c("Closed without arrest","Open/No arrest"),1, 0),
+       city_state = replace(city_state, city_state %in% 'Tulsa,AL','Tulsa,OK')
+      )
+  
+```
+`Baltimore_data` was created taking the homicide_data1 data, `filtering` for only `Baltimore,MD` and then using the `mutate` function to perform a proportional test using the `map2` function.
+```{r}
+baltimore_data= 
+   homicide_data1%>%
+   filter(city_state %in% 'Baltimore, MD')%>%
+   mutate(p_test = 
+             map2(number_unsolved_murders,total_number_homicides, ~prop.test(.x,.y )%>%
+                     broom::tidy()))%>%unnest()%>%
+   select(city_state,estimate,'CI_lower'=conf.low, 'CI_upper'=conf.high)
+```
+
+For the homicide cities section a similar function to the above was utilized, only this time without the `flter()`function.
+```{r}
+homicide_cities= 
+   homicide_data1%>%
+   mutate(p_test = map2(number_unsolved_murders,total_number_homicides,~prop.test(.x,.y)%>%broom::tidy()))%>%unnest()%>%
+   select(city_state,estimate,'CI_lower' = conf.low, 'CI_upper' = conf.high)
+```
