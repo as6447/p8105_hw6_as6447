@@ -32,15 +32,7 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 ```
 
 ## Problem 2
-Create a city_state variable (e.g. “Baltimore, MD”), and a binary variable indicating whether the homicide is solved. 
 
-Omit cities Dallas, TX; 
-Phoenix, AZ; and Kansas City, MO – these don’t report victim race. 
-Also omit Tulsa, AL – this is a data entry mistake. 
-
-For this problem, limit your analysis those for whom victim_race is white or black. 
-
-Be sure that victim_age is numeric.
 ```{r}
 homicide_data = read.csv('data/homicide-data.csv')%>%
    janitor::clean_names()%>%
@@ -54,6 +46,17 @@ homicide_data = read.csv('data/homicide-data.csv')%>%
       resolved = as.numeric(disposition == "Closed by arrest"))%>% filter(victim_race == 'Black'|victim_race=='White') %>% filter(!city_state %in% c('Phoenix, AZ','Kansas City, MO ','Tulsa, AL'))
  
 ```
+I Created a city_state variable using a similar process to Homework #5 where I used the `unite` function to combine the city and state variables together and a binary variable indicating whether the homicide is solved. 
+
+Omit cities Dallas, TX; 
+Phoenix, AZ; and Kansas City, MO – these don’t report victim race. 
+Also omit Tulsa, AL – this is a data entry mistake. 
+
+For this problem, limit your analysis those for whom victim_race is white or black. 
+
+Be sure that victim_age is numeric.
+
+
 
 For the city of Baltimore, MD, use the glm function to fit a logistic regression with 
 
@@ -167,34 +170,42 @@ Compare your model to two others:
 One using length at birth and gestational age as predictors (main effects only)
 ```{r}
 cv_df = 
-  crossv_mc(birthweight_data, 100) 
+  crossv_mc(birthweight_data, 100)
+
+model_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
 ```
 
 
 ```{r}
 birthweight_models = 
   cv_df %>% 
-   mutate(bwt_model_mine = map(train,~lm(bwt~momage,data=.x)),
-   bwt_modelme_1 = map(data, ~lm(bwt~blength + gaweeks,data=.x)),
+   mutate(bwt_model_mine = map(train,~lm(bwt~momage, data = .x)),
+   bwt_modelme_1 = map(train, ~lm(bwt~blength + gaweeks,data=.x)),
    bwt_modelme_2 = map(train, ~lm(bwt~bhead+blength+babysex+bhead*blength+bhead*babysex+babysex*blength+bhead*blength*babysex,data=.x)))%>%
       mutate(
-         rmse_model = map2_dbl(btw_model_mine, test, ~rmse(model =.x,data=.y)),
+         rmse_model = map2_dbl(bwt_model_mine, test, ~rmse(model =.x,data=.y)),
          rmse_model1 = map2_dbl(bwt_modelme_1, test, ~rmse(model =.x,data=.y)),
          rmse_model2 = map2_dbl(bwt_modelme_2, test, ~rmse(model =.x,data=.y)))
    
 ```
 
 One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
-```{r}
-birthweight_model2 = 
-  birthweight_data %>% 
-  glm(bwt ~ bhead*blength*babysex, data = .)%>% 
-  broom::tidy() 
-```
 
 Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
 
 ```{r}
-
+birthweight_models %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
 ```
 
