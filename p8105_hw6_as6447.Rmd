@@ -9,6 +9,8 @@ output: github_document
 library(tidyverse)
 library(p8105.datasets)
 library(viridis)
+library(modelr)
+library(mgcv)
 
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -30,13 +32,17 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 ```
 
 ## Problem 2
+Create a city_state variable (e.g. “Baltimore, MD”), and a binary variable indicating whether the homicide is solved. 
 
-1.Describe the raw data. 
+Omit cities Dallas, TX; 
+Phoenix, AZ; and Kansas City, MO – these don’t report victim race. 
+Also omit Tulsa, AL – this is a data entry mistake. 
 
-The raw data includes n=52179 observations with 12 variables. There are issues with some of the variable names, such as the `lon` variable, which is actually the longitudinal variable but is incorrectly stated. Another issue was that that the `city` and `state` are seperate from each other. These were instead combined together.
+For this problem, limit your analysis those for whom victim_race is white or black. 
 
+Be sure that victim_age is numeric.
 ```{r}
-homicide_data = read.csv('data/homicide-data.csv')%>% 
+homicide_data = read.csv('data/homicide-data.csv')%>%
    janitor::clean_names()%>%
    unite('city_state',city:state,remove=FALSE, sep = ', ')%>%
       unite('Victim_full_name',victim_first:victim_last,remove=FALSE, sep = ' ')%>%
@@ -44,25 +50,151 @@ homicide_data = read.csv('data/homicide-data.csv')%>%
    rename(longitude=lon, latitude=lat)%>%
    mutate(
       unsolved_murder = if_else(disposition %in% c("Closed without arrest","Open/No arrest"),1, 0),
-       city_state = replace(city_state, city_state %in% 'Tulsa,AL','Tulsa,OK')
-      )
-  
-```
-`Baltimore_data` was created taking the homicide_data1 data, `filtering` for only `Baltimore,MD` and then using the `mutate` function to perform a proportional test using the `map2` function.
-```{r}
-baltimore_data= 
-   homicide_data1%>%
-   filter(city_state %in% 'Baltimore, MD')%>%
-   mutate(p_test = 
-             map2(number_unsolved_murders,total_number_homicides, ~prop.test(.x,.y )%>%
-                     broom::tidy()))%>%unnest()%>%
-   select(city_state,estimate,'CI_lower'=conf.low, 'CI_upper'=conf.high)
+      victim_age=as.numeric(victim_age),   
+      resolved = as.numeric(disposition == "Closed by arrest"))%>% filter(victim_race == 'Black'|victim_race=='White') %>% filter(!city_state %in% c('Phoenix, AZ','Kansas City, MO ','Tulsa, AL'))
+ 
 ```
 
-For the homicide cities section a similar function to the above was utilized, only this time without the `flter()`function.
+For the city of Baltimore, MD, use the glm function to fit a logistic regression with 
+
+resolved vs unresolved as the outcome and victim age, sex and race as predictors. 
+
+Save the output of glm as an R object; apply the broom::tidy to this object; and 
+
+obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
+
 ```{r}
-homicide_cities= 
-   homicide_data1%>%
-   mutate(p_test = map2(number_unsolved_murders,total_number_homicides,~prop.test(.x,.y)%>%broom::tidy()))%>%unnest()%>%
-   select(city_state,estimate,'CI_lower' = conf.low, 'CI_upper' = conf.high)
+baltimore_df = 
+  homicide_data%>% 
+  filter(city_state == "Baltimore, MD") %>% 
+  select(resolved, victim_age, victim_race, victim_sex)
 ```
+
+```{r}
+fit_logistic = 
+  baltimore_df %>% 
+  glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial())
+```
+
+```{r}
+fit_logistic %>% 
+  broom::tidy() %>% 
+  mutate(adjusted_OR = exp(estimate),
+         lower_bound_CI = exp(estimate)-1.96*std.error,
+         upperbound_CI = exp(estimate) +1.96*std.error
+)%>%
+  select(term, log_OR = estimate, adjusted_OR, lower_bound_CI,upperbound_CI,  p.value) %>% 
+  knitr::kable()
+```
+
+Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims. 
+
+Do this within a “tidy” pipeline, making use of purrr::map, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
+
+```{r}
+fit_logistic_city = 
+  homicide_data %>%
+   nest(data=-city_state)%>%
+   mutate(data,models=map(data, ~glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial())),results = map(models, broom::tidy, conf.int = TRUE))%>%
+   select(city_state,results)%>%
+   unnest(cols = results)%>%
+   filter(term != 'victim_sexUnknown')
+```
+
+
+Create a plot that shows the estimated ORs and CIs for each city. Organize cities according to estimated OR, and comment on the plot.
+```{r}
+fit_logistic_city%>% filter(
+   term == 'victim_sexMale')%>%
+   ggplot(aes(x=city_state,y=statistic,fill=fct_reorder(city_state,statistic,.desc = T ))) + geom_point() + geom_errorbar(aes(ymin = conf.low, ymax = conf.high )) + theme(axis.text.x = element_text(angle=90, hjust=1))
+ggsave='data/homicide_map.pdf'
+```
+
+
+##Problem3
+
+
+```{r}
+birthweight_data = read.csv('data/birthweight.csv')%>%
+   janitor::clean_names()%>%
+   mutate(
+      bwt=(bwt*0.00220462),
+      babysex=  replace(babysex, babysex == 1 ,'Male'),
+      babysex=  replace(babysex, babysex == 2 ,'Female'),
+      frace=  replace(frace, frace == 1 ,'White'),
+      frace=  replace(frace, frace == 2 ,'Black'),
+      frace=  replace(frace, frace == 3 ,'Asian'),
+      frace=  replace(frace, frace == 4 ,'Puerto Rican'),
+      frace=  replace(frace, frace == 8 ,'Other'),
+      frace=  replace(frace, frace == 9 ,'Unknown'),
+      malform=  replace(malform, malform == 0 ,'Absent'),
+      malform=  replace(malform, malform == 1 ,'Present'),
+      mrace=  replace(mrace, mrace == 1 ,'White'),
+      mrace=  replace(mrace, mrace == 2 ,'Black'),
+      mrace=  replace(mrace, mrace == 3 ,'Asian'),
+      mrace=  replace(mrace, mrace == 4 ,'Puerto Rican'),
+      mrace=  replace(mrace, mrace == 8 ,'Other'),
+      mheight = (mheight*2.54),
+      fincome = (fincome*100)
+   )
+```
+The data was loaded and tidied. Variables that were factors were converted from numeric. These were the fathers and mothers race, which were converted to the list the actual race/ethnicity rather than a numbered code. There was also unit conversions for height (inches) and weight (pounds) calculations . Income was converted to be in hundreds. 
+
+
+Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. 
+
+```{r}
+birthweight_regression = 
+  birthweight_data %>% 
+  glm(bwt ~ momage, data = .)
+
+birthweight_regression%>%broom::tidy()
+```
+Research has previously suggested that a mothers age can impact the birthwieght of the baby.
+
+
+Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+
+```{r}
+birthweight_data %>% 
+  modelr::add_residuals(birthweight_regression) %>% 
+   modelr::add_predictions(birthweight_regression)%>%
+  ggplot(aes(x = momage, y = resid)) + geom_point()
+```
+
+Compare your model to two others:
+
+One using length at birth and gestational age as predictors (main effects only)
+```{r}
+cv_df = 
+  crossv_mc(birthweight_data, 100) 
+```
+
+
+```{r}
+birthweight_models = 
+  cv_df %>% 
+   mutate(bwt_model_mine = map(train,~lm(bwt~momage,data=.x)),
+   bwt_modelme_1 = map(data, ~lm(bwt~blength + gaweeks,data=.x)),
+   bwt_modelme_2 = map(train, ~lm(bwt~bhead+blength+babysex+bhead*blength+bhead*babysex+babysex*blength+bhead*blength*babysex,data=.x)))%>%
+      mutate(
+         rmse_model = map2_dbl(btw_model_mine, test, ~rmse(model =.x,data=.y)),
+         rmse_model1 = map2_dbl(bwt_modelme_1, test, ~rmse(model =.x,data=.y)),
+         rmse_model2 = map2_dbl(bwt_modelme_2, test, ~rmse(model =.x,data=.y)))
+   
+```
+
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+```{r}
+birthweight_model2 = 
+  birthweight_data %>% 
+  glm(bwt ~ bhead*blength*babysex, data = .)%>% 
+  broom::tidy() 
+```
+
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+```{r}
+
+```
+
